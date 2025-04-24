@@ -1,3 +1,12 @@
+'''
+GENERAL INSTRUCTIONS - Getting ready with files
+Step 1: Download Interactive Brokers .csv for the selected date frame, open in in Numbers and keep only the 'Trades',
+        then keep the upper column naming for better column indexing (removed column not needed)
+Step 2: Run the first Juniper script for normalizing and simplifying the trades
+Step 3: Copy the results into RiskManagementAnalysis numbers file, and fill the HIGH/LOW prices for the respective date ranges
+Step 4: Create a new Trades_clean.csv, fill it with the last results, and run the below scripts 
+'''
+
 import pandas as pd
 print("=========================================================")
 
@@ -165,7 +174,7 @@ def calculateAdvanced():
 
 
 def applyStrategy():
-    tp_pct_target = 3.0
+    tp_pct_target = 4.0
     sl_pct_target = 1.0
 
     results = []
@@ -190,8 +199,8 @@ def applyStrategy():
         tp_success = data[tp_condition]
         tp_count = len(tp_success)
 
-        # SL strategy: if Price Low hit threshold
-        sl_condition = (data["Price Low"] <= (1 - sl_pct_target / 100) * data["buyPrice"])
+        # SL strategy: if Price Low hit threshold and original PL was negative
+        sl_condition = (data["PL"] < 0) & (data["Price Low"] <= (1 - sl_pct_target / 100) * data["buyPrice"])
         sl_success = data[sl_condition]
         sl_count = len(sl_success)
 
@@ -209,19 +218,46 @@ def applyStrategy():
         data_sl["sim_PL"] = (data_sl["sim_sellPrice"] - data_sl["buyPrice"]) * data_sl["Quantity"]
         avg_segment_sl_pl = data_sl["sim_PL"].mean()
 
+        # Combined TP and SL strategy
+        data_combined = data.copy()
+        data_combined["sim_sellPrice"] = data_combined["sellPrice"]
+        data_combined.loc[tp_condition, "sim_sellPrice"] = data_combined.loc[tp_condition, "buyPrice"] * (1 + tp_pct_target / 100)
+        data_combined.loc[~tp_condition & sl_condition, "sim_sellPrice"] = data_combined.loc[~tp_condition & sl_condition, "buyPrice"] * (1 - sl_pct_target / 100)
+        data_combined["sim_PL"] = (data_combined["sim_sellPrice"] - data_combined["buyPrice"]) * data_combined["Quantity"]
+        avg_segment_combined_pl = data_combined["sim_PL"].mean()
+
+        # Win rate for each strategy
+        tp_win_rate = (len(data_tp[data_tp["sim_PL"] > 0]) / len(data_tp)) * 100 if len(data_tp) else 0
+        sl_win_rate = (len(data_sl[data_sl["sim_PL"] > 0]) / len(data_sl)) * 100 if len(data_sl) else 0
+        combined_win_rate = (len(data_combined[data_combined["sim_PL"] > 0]) / len(data_combined)) * 100 if len(data_combined) else 0
+
+        win_count = len(data[data["PL"] > 0])
+        loss_count = len(data[data["PL"] < 0])
+        win_rate = (win_count / (win_count + loss_count)) * 100 if (win_count + loss_count) else 0
+
         print(f"\n--- {period}-Day Strategy Simulation ---")
         print(f"Trades Count: {len(data)}")
         print(f"TP {tp_pct_target}% Hit: {tp_count} times")
         print(f"Simulated Avg PL with TP strategy: {avg_segment_tp_pl:.2f}")
         print(f"SL {sl_pct_target}% Hit: {sl_count} times")
         print(f"Simulated Avg PL with SL strategy: {avg_segment_sl_pl:.2f}")
+        print(f"Simulated Avg PL with Combined strategy: {avg_segment_combined_pl:.2f}")
         print(f"Original Avg PL in this segment: {data['PL'].mean():.2f}")
+        print(f"Win Rate: {win_rate:.2f}%")
+        print(f"TP Strategy Win Rate: {tp_win_rate:.2f}%")
+        print(f"SL Strategy Win Rate: {sl_win_rate:.2f}%")
+        print(f"Combined Strategy Win Rate: {combined_win_rate:.2f}%")
 
         results.append({
             "period": period,
             "original": data["PL"].mean(),
             "TP": avg_segment_tp_pl,
-            "SL": avg_segment_sl_pl
+            "SL": avg_segment_sl_pl,
+            "Combined": avg_segment_combined_pl,
+            "win_rate": win_rate,
+            "tp_win_rate": tp_win_rate,
+            "sl_win_rate": sl_win_rate,
+            "combined_win_rate": combined_win_rate
         })
 
     analyzeResults(results)
@@ -234,11 +270,13 @@ def analyzeResults(results):
     worst_segment = min(results, key=lambda x: x["original"])
     best_tp = max(results, key=lambda x: x["TP"])
     best_sl = max(results, key=lambda x: x["SL"])
+    best_combined = max(results, key=lambda x: x["Combined"])
 
     print(f"Best Original Segment: {best_segment['period']} with Avg PL {best_segment['original']:.2f}")
     print(f"Worst Original Segment: {worst_segment['period']} with Avg PL {worst_segment['original']:.2f}")
     print(f"Best Segment with TP Strategy: {best_tp['period']} with Simulated Avg PL {best_tp['TP']:.2f}")
     print(f"Best Segment with SL Strategy: {best_sl['period']} with Simulated Avg PL {best_sl['SL']:.2f}")
+    print(f"Best Segment with Combined Strategy: {best_combined['period']} with Simulated Avg PL {best_combined['Combined']:.2f}")
 
 calculateBasics()
 #calculateAdvanced()
